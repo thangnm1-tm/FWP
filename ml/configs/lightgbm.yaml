@@ -1,0 +1,20 @@
+# LightGBM Training Configuration for FwP
+seed: 42
+
+data_path: "data/synthetic/training_features.csv"
+raw_data_dir: "data/synthetic"
+label: "liked"
+
+lgbm_params:
+  objective: "binary"
+  metric: "binary_logloss"
+  learning_rate: 0.05
+  num_leaves: 31
+  max_depth: 6
+  min_child_samples: 20
+  n_estimators: 500
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 1.0
+  verbose: -1

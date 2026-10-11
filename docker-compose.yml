@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # ──────────────── PostgreSQL + PostGIS ────────────────
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: fwp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fwp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fwp_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-fwp_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./infrastructure/migration-v1.sql:/docker-entrypoint-initdb.d/02-migration-v1.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fwp_user} -d ${POSTGRES_DB:-fwp_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────── Redis ────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: fwp-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────── NestJS Backend ────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fwp-backend
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-fwp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fwp_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-fwp_db}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_key_12345}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev_jwt_refresh_secret_key_12345}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-15m}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
+      ML_SERVICE_URL: http://ml-service:8000
+      ML_SERVICE_TIMEOUT: ${ML_SERVICE_TIMEOUT:-3000}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-stu.ptit.edu.vn}
+      NODE_ENV: ${NODE_ENV:-development}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
+  # ──────────────── ML Ranking Service ────────────────
+  ml-service:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile
+    container_name: fwp-ml-service
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-fwp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fwp_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-fwp_db}
+      MODEL_PATH: /app/artifacts/active_model
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./ml:/app
+      - ml_artifacts:/app/artifacts
+
+volumes:
+  postgres_data:
+  redis_data:
+  ml_artifacts:

@@ -1,0 +1,9 @@
+# Logistic Regression Training Configuration for FwP (Baseline)
+seed: 42
+
+data_path: "data/synthetic/training_features.csv"
+raw_data_dir: "data/synthetic"
+label: "liked"
+
+C: 1.0
+max_iter: 1000

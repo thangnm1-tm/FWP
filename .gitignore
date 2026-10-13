@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .env
+android/local.properties
+android/.gradle/
+android/app/build/
 *.log
 coverage/
 __pycache__/
@@ -14,3 +17,4 @@ ml/artifacts/
 !ml/artifacts/.gitkeep
 .DS_Store
 Thumbs.db
+scratch/

@@ -11,6 +11,7 @@ import { MatchesModule } from './matches/matches.module';
 import { RecommendationModule } from './recommendation/recommendation.module';
 import { ChatModule } from './chat/chat.module';
 import { LocationModule } from './location/location.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -32,6 +33,9 @@ import { LocationModule } from './location/location.module';
         password: configService.get('POSTGRES_PASSWORD', 'fwp_password_change_me'),
         database: configService.get('POSTGRES_DB', 'fwp_db'),
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        // Includes entities registered by feature modules, including the
+        // chat entities kept together in chat.entities.ts.
+        autoLoadEntities: true,
         synchronize: false, // Use migrations in production
         migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
         migrationsRun: true,
@@ -50,6 +54,7 @@ import { LocationModule } from './location/location.module';
     RecommendationModule,
     ChatModule,
     LocationModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

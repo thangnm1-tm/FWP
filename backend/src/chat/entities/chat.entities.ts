@@ -94,7 +94,7 @@ export class RevealRequest {
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @Column({ name: 'responded_at', nullable: true })
+  @Column({ name: 'responded_at', type: 'timestamptz', nullable: true })
   respondedAt: Date | null;
 }
 

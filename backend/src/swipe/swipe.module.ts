@@ -5,10 +5,14 @@ import { RecommendationImpression } from './entities/recommendation-impression.e
 import { Match } from '../matches/entities/match.entity';
 import { SwipeService } from './swipe.service';
 import { SwipeController } from './swipe.controller';
+import { ChatModule } from '../chat/chat.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SwipeEvent, RecommendationImpression, Match]),
+    ChatModule,
+    NotificationsModule,
   ],
   controllers: [SwipeController],
   providers: [SwipeService],

@@ -10,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
 import { UserStatus } from '../users/entities/user.entity';
 import { RegisterDto, LoginDto, VerifyOtpDto } from './dto/auth.dto';
+import { MailerService } from '../mailer/mailer.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly mailerService: MailerService,
   ) {
     this.allowedDomains = this.configService
       .get<string>('ALLOWED_EMAIL_DOMAINS', 'stu.ptit.edu.vn')
@@ -32,8 +34,10 @@ export class AuthService {
    * Register a new user with student email
    */
   async register(dto: RegisterDto) {
+    const email = dto.email.trim().toLowerCase();
+
     // Validate email domain
-    const emailDomain = dto.email.split('@')[1];
+    const emailDomain = email.split('@')[1];
     if (!this.allowedDomains.includes(emailDomain)) {
       throw new BadRequestException(
         `Email phải thuộc domain: ${this.allowedDomains.join(', ')}`,
@@ -41,8 +45,23 @@ export class AuthService {
     }
 
     // Check existing user
-    const existing = await this.usersService.findByEmail(dto.email);
+    const existing = await this.usersService.findByEmail(email);
     if (existing) {
+      if (existing.status === UserStatus.PENDING) {
+        const passwordMatches = await bcrypt.compare(
+          dto.password,
+          existing.passwordHash,
+        );
+        if (!passwordMatches) {
+          throw new UnauthorizedException('Email hoặc mật khẩu không đúng');
+        }
+        await this.issueOtp(existing.id, existing.email);
+        return {
+          message: 'OTP mới đã được gửi. Vui lòng xác thực email.',
+          userId: existing.id,
+          ...this.demoOtpResponse(),
+        };
+      }
       throw new ConflictException('Email đã được đăng ký');
     }
 
@@ -50,26 +69,15 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     // Create user
-    const user = await this.usersService.createUser(dto.email, passwordHash);
+    const user = await this.usersService.createUser(email, passwordHash);
 
     // Generate and send OTP
-    const otpCode = this.generateOtp();
-    const expiresAt = new Date(
-      Date.now() + this.otpExpirationMinutes * 60 * 1000,
-    );
-    await this.usersService.createVerification(user.id, otpCode, expiresAt);
-
-    // TODO: Send OTP via email (SMTP integration)
-    // For development, log OTP
-    console.log(`[DEV] OTP for ${dto.email}: ${otpCode}`);
+    await this.issueOtp(user.id, user.email);
 
     return {
       message: 'Đăng ký thành công. Vui lòng xác thực email bằng OTP.',
       userId: user.id,
-      // Only include OTP in development mode
-      ...(this.configService.get('NODE_ENV') === 'development' && {
-        devOtp: otpCode,
-      }),
+      ...this.demoOtpResponse(),
     };
   }
 
@@ -77,6 +85,11 @@ export class AuthService {
    * Verify student email with OTP
    */
   async verifyOtp(userId: string, dto: VerifyOtpDto) {
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new BadRequestException('User không tồn tại');
+    }
+
     const verification =
       await this.usersService.findLatestVerification(userId);
 
@@ -109,14 +122,15 @@ export class AuthService {
     await this.usersService.activateUser(userId);
 
     // Generate tokens
-    return this.generateTokens(userId, verification.userId);
+    return this.generateTokens(user.id, user.email);
   }
 
   /**
    * Login with email & password
    */
   async login(dto: LoginDto) {
-    const user = await this.usersService.findByEmail(dto.email);
+    const email = dto.email.trim().toLowerCase();
+    const user = await this.usersService.findByEmail(email);
     if (!user) {
       throw new UnauthorizedException('Email hoặc mật khẩu không đúng');
     }
@@ -173,26 +187,33 @@ export class AuthService {
       throw new BadRequestException('Tài khoản đã được xác thực');
     }
 
-    const otpCode = this.generateOtp();
-    const expiresAt = new Date(
-      Date.now() + this.otpExpirationMinutes * 60 * 1000,
-    );
-    await this.usersService.createVerification(user.id, otpCode, expiresAt);
-
-    console.log(`[DEV] New OTP for ${user.email}: ${otpCode}`);
+    await this.issueOtp(user.id, user.email);
 
     return {
       message: 'OTP mới đã được gửi',
-      ...(this.configService.get('NODE_ENV') === 'development' && {
-        devOtp: otpCode,
-      }),
     };
   }
 
   // ──── Private helpers ────
 
   private generateOtp(): string {
+    if (this.configService.get<string>('OTP_DELIVERY_MODE') === 'demo') {
+      return this.configService.get<string>('DEMO_OTP', '123456');
+    }
     return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private demoOtpResponse(): Record<string, string> {
+    return this.configService.get<string>('OTP_DELIVERY_MODE') === 'demo'
+      ? { devOtp: this.configService.get<string>('DEMO_OTP', '123456') }
+      : {};
+  }
+
+  private async issueOtp(userId: string, email: string): Promise<void> {
+    const otpCode = this.generateOtp();
+    const expiresAt = new Date(Date.now() + this.otpExpirationMinutes * 60 * 1000);
+    await this.usersService.createVerification(userId, otpCode, expiresAt);
+    await this.mailerService.sendOtp(email, otpCode);
   }
 
   private async generateTokens(userId: string, email: string) {

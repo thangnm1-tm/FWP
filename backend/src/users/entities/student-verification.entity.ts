@@ -32,7 +32,7 @@ export class StudentVerification {
   @Column({ default: false })
   verified: boolean;
 
-  @Column({ name: 'verified_at', nullable: true })
+  @Column({ name: 'verified_at', type: 'timestamptz', nullable: true })
   verifiedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })

@@ -2,12 +2,17 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { SwipeEvent, SwipeAction } from './entities/swipe-event.entity';
 import { RecommendationImpression } from './entities/recommendation-impression.entity';
 import { Match } from '../matches/entities/match.entity';
+import { User } from '../users/entities/user.entity';
+import { ChatService } from '../chat/chat.service';
+import { ChatGateway } from '../chat/chat.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class SwipeService {
@@ -22,6 +27,9 @@ export class SwipeService {
     private readonly matchRepository: Repository<Match>,
 
     private readonly dataSource: DataSource,
+    private readonly chatService: ChatService,
+    private readonly chatGateway: ChatGateway,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -39,6 +47,22 @@ export class SwipeService {
       throw new BadRequestException('Cannot swipe yourself');
     }
 
+    const candidate = await this.dataSource.getRepository(User).findOne({
+      where: { id: candidateId },
+    });
+    if (!candidate) {
+      throw new NotFoundException('Candidate not found');
+    }
+
+    if (impressionId) {
+      const impression = await this.impressionRepository.findOne({
+        where: { id: impressionId, viewerUserId: viewerId, candidateUserId: candidateId },
+      });
+      if (!impression) {
+        throw new BadRequestException('Impression does not belong to this feed card');
+      }
+    }
+
     // Check for existing swipe (dedup)
     const existing = await this.swipeRepository.findOne({
       where: { viewerUserId: viewerId, candidateUserId: candidateId },
@@ -48,7 +72,7 @@ export class SwipeService {
     }
 
     // Use transaction for atomicity
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Insert swipe event
       const swipe = manager.create(SwipeEvent, {
         viewerUserId: viewerId,
@@ -94,6 +118,13 @@ export class SwipeService {
 
       return { matched: false };
     });
+    if (result.matched && result.matchId) {
+      const room = await this.chatService.createChatRoom(result.matchId);
+      const matchEvent = { matchId: result.matchId, roomId: room.id, users: [viewerId, candidateId] };
+      this.chatGateway.notifyUsers([viewerId, candidateId], 'match:new', matchEvent);
+      await this.notifications.sendToUsers([viewerId, candidateId], { title: 'Bạn có một kết nối mới!', body: 'Hãy bắt đầu trò chuyện ẩn danh trên FwP.', data: { type: 'match', matchId: result.matchId, roomId: room.id } });
+    }
+    return result;
   }
 
   /**
@@ -104,7 +135,7 @@ export class SwipeService {
     requestId: string,
     modelVersion: string,
     candidates: { candidateId: string; score: number; rank: number }[],
-  ): Promise<void> {
+  ): Promise<{ candidateId: string; impressionId: string }[]> {
     const impressions = candidates.map((c) =>
       this.impressionRepository.create({
         viewerUserId: viewerId,
@@ -115,7 +146,11 @@ export class SwipeService {
         score: c.score,
       }),
     );
-    await this.impressionRepository.save(impressions);
+    const saved = await this.impressionRepository.save(impressions);
+    return saved.map((impression) => ({
+      candidateId: impression.candidateUserId,
+      impressionId: impression.id,
+    }));
   }
 
   /**

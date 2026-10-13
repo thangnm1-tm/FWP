@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   purpose purpose_enum,
   profile_completed BOOLEAN DEFAULT FALSE,
   gpa_visible BOOLEAN DEFAULT TRUE,
+  discoverable BOOLEAN NOT NULL DEFAULT FALSE,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -301,16 +302,19 @@ VALUES (
 ) ON CONFLICT DO NOTHING;
 
 -- Faculties
-INSERT INTO faculties (university_id, name, code) VALUES
-  ('a0000000-0000-0000-0000-000000000001', 'Công nghệ thông tin', 'CNTT'),
-  ('a0000000-0000-0000-0000-000000000001', 'An toàn thông tin', 'ATTT'),
-  ('a0000000-0000-0000-0000-000000000001', 'Điện tử Viễn thông', 'DTVT'),
-  ('a0000000-0000-0000-0000-000000000001', 'Quản trị kinh doanh', 'QTKD'),
-  ('a0000000-0000-0000-0000-000000000001', 'Kế toán', 'KTT'),
-  ('a0000000-0000-0000-0000-000000000001', 'Mạng máy tính', 'MMT'),
-  ('a0000000-0000-0000-0000-000000000001', 'Khoa học máy tính', 'KHMT'),
-  ('a0000000-0000-0000-0000-000000000001', 'Kỹ thuật phần mềm', 'KTPM')
-ON CONFLICT DO NOTHING;
+INSERT INTO faculties (university_id, name, code)
+SELECT 'a0000000-0000-0000-0000-000000000001', seed.name, seed.code
+FROM (VALUES
+  ('Công nghệ thông tin', 'CNTT'), ('An toàn thông tin', 'ATTT'),
+  ('Điện tử Viễn thông', 'DTVT'), ('Quản trị kinh doanh', 'QTKD'),
+  ('Kế toán', 'KTT'), ('Mạng máy tính', 'MMT'),
+  ('Khoa học máy tính', 'KHMT'), ('Kỹ thuật phần mềm', 'KTPM')
+) AS seed(name, code)
+WHERE NOT EXISTS (
+  SELECT 1 FROM faculties f
+  WHERE f.university_id = 'a0000000-0000-0000-0000-000000000001'
+    AND f.code = seed.code
+);
 
 -- Interests
 INSERT INTO interests (name, category) VALUES

@@ -10,9 +10,14 @@ import {
 import { Match } from '../matches/entities/match.entity';
 import { ChatService } from './chat.service';
 import { ChatController } from './chat.controller';
+import { ChatGateway } from './chat.gateway';
+import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
+    AuthModule,
+    NotificationsModule,
     TypeOrmModule.forFeature([
       ChatRoom,
       Message,
@@ -23,7 +28,7 @@ import { ChatController } from './chat.controller';
     ]),
   ],
   controllers: [ChatController],
-  providers: [ChatService],
-  exports: [ChatService],
+  providers: [ChatService, ChatGateway],
+  exports: [ChatService, ChatGateway],
 })
 export class ChatModule {}

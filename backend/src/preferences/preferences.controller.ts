@@ -1,6 +1,6 @@
 import { Controller, Get, Put, Body, UseGuards, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
-import { IsOptional, IsString, IsNumber, IsEnum, IsBoolean, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsEnum, IsBoolean, IsIn, Min, Max } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PreferencesService } from './preferences.service';
@@ -8,6 +8,7 @@ import { GpaPreference } from './entities/preference.entity';
 
 class UpdatePreferencesDto {
   @ApiPropertyOptional() @IsOptional() @IsString()
+  @IsIn(['all', 'male', 'female', 'other'])
   genderPreference?: string;
 
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(18) @Max(99)

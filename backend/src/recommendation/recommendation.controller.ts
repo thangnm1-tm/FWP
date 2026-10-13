@@ -29,6 +29,15 @@ export class RecommendationController {
         candidateId: c.candidateId,
         rank: c.rank,
         distanceKm: c.distanceKm ? Math.round(c.distanceKm * 10) / 10 : null,
+        impressionId: c.impressionId,
+        displayName: c.displayName,
+        age: c.age,
+        bio: c.bio,
+        photos: c.photos || [],
+        interests: c.interests || [],
+        faculty: c.faculty,
+        university: c.university,
+        gpaBucket: c.gpaBucket,
       })),
     };
   }

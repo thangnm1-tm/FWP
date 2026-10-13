@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Profile, gpaToBucket } from './entities/profile.entity';
+import { University } from './entities/university.entity';
+import { Faculty } from './entities/faculty.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
@@ -9,6 +11,10 @@ export class ProfilesService {
   constructor(
     @InjectRepository(Profile)
     private readonly profileRepository: Repository<Profile>,
+    @InjectRepository(University)
+    private readonly universityRepository: Repository<University>,
+    @InjectRepository(Faculty)
+    private readonly facultyRepository: Repository<Faculty>,
   ) {}
 
   async findByUserId(userId: string): Promise<Profile | null> {
@@ -21,6 +27,12 @@ export class ProfilesService {
   async createProfile(userId: string): Promise<Profile> {
     const profile = this.profileRepository.create({ userId });
     return this.profileRepository.save(profile);
+  }
+
+  async getProfileOptions() {
+    const universities = await this.universityRepository.find({ where: { active: true }, order: { name: 'ASC' } });
+    const faculties = await this.facultyRepository.find({ order: { name: 'ASC' } });
+    return { universities, faculties };
   }
 
   async updateProfile(
@@ -37,19 +49,32 @@ export class ProfilesService {
       (dto as any).gpaBucket = gpaToBucket(dto.gpa);
     }
 
-    // Check profile completeness
-    const updated = { ...profile, ...dto };
-    const isComplete =
-      !!updated.displayName &&
-      !!updated.dateOfBirth &&
-      !!updated.gender &&
-      !!updated.bio &&
-      updated.photos.length > 0 &&
-      updated.gpa !== null &&
-      !!updated.universityId &&
-      !!updated.facultyId;
+    if (dto.photos && dto.photos.length > 0) profile.photos = dto.photos;
 
     Object.assign(profile, dto);
+
+    if (profile.dateOfBirth && profile.dateOfBirth > new Date(new Date().setFullYear(new Date().getFullYear() - 18))) {
+      throw new BadRequestException('FwP chỉ dành cho người dùng từ đủ 18 tuổi.');
+    }
+
+    // Check profile completeness
+    const isComplete =
+      !!profile.displayName &&
+      !!profile.dateOfBirth &&
+      !!profile.gender &&
+      !!profile.bio &&
+      (profile.photos?.length || 0) > 0 &&
+      profile.gpa !== null &&
+      profile.gpa !== undefined &&
+      !!profile.universityId &&
+      !!profile.facultyId;
+
+    if (dto.discoverable === true && !isComplete) {
+      throw new BadRequestException(
+        'Hãy thêm ảnh, tên, ngày sinh, giới thiệu, GPA, trường và khoa trước khi bật Khám phá.',
+      );
+    }
+
     profile.profileCompleted = isComplete;
 
     if (dto.gpa !== undefined) {
@@ -82,5 +107,21 @@ export class ProfilesService {
     }
 
     return profile;
+  }
+
+  async addPhoto(userId: string, url: string): Promise<Profile> {
+    let profile = await this.findByUserId(userId);
+    if (!profile) profile = await this.createProfile(userId);
+    if (profile.photos.includes(url)) return profile;
+    profile.photos = [...profile.photos, url];
+    profile.profileCompleted = this.isComplete(profile);
+    return this.profileRepository.save(profile);
+  }
+
+  private isComplete(profile: Profile): boolean {
+    return !!profile.displayName && !!profile.dateOfBirth && !!profile.gender &&
+      !!profile.bio && (profile.photos?.length || 0) > 0 &&
+      profile.gpa !== null && profile.gpa !== undefined &&
+      !!profile.universityId && !!profile.facultyId;
   }
 }

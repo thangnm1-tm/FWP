@@ -20,7 +20,8 @@ def get_db_url() -> str:
     user = os.environ.get("POSTGRES_USER", "fwp_user")
     password = os.environ.get("POSTGRES_PASSWORD", "fwp_password_change_me")
     db = os.environ.get("POSTGRES_DB", "fwp_db")
-    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
+
 
 
 class FeatureBuilder:

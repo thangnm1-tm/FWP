@@ -20,10 +20,11 @@ Response:
 ```json
 {
   "message": "Đăng ký thành công. Vui lòng xác thực email bằng OTP.",
-  "userId": "uuid",
-  "devOtp": "123456"  // only in development
+  "userId": "uuid"
 }
 ```
+
+OTP is sent exclusively by the configured SMTP provider and is never returned by the API.
 
 ### Verify OTP
 ```http
@@ -61,6 +62,34 @@ Response:
 ```http
 GET /profile
 Authorization: Bearer {token}
+```
+
+### Upload Profile Photo
+```http
+POST /profile/photos
+Authorization: Bearer {token}
+Content-Type: multipart/form-data
+
+photo: <JPEG, PNG, or WebP; max 8 MB>
+```
+
+The response contains the Cloudinary `url` and the updated `photos` array.
+
+## Realtime chat
+
+Connect Socket.IO to `http://localhost:3000/chat` with `auth: { token: "<JWT>" }`.
+Use `room:join`, `message:send`, `typing:start`, and `typing:stop`; listen to
+`message:new`, `typing`, `presence`, and `match:new`.
+
+## Push notifications
+
+Register a device after login:
+```http
+POST /notifications/device-token
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{"token":"fcm-token", "platform":"android"}
 ```
 
 ### Update Profile

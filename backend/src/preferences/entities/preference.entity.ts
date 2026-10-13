@@ -26,7 +26,7 @@ export class Preference {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @Column({ name: 'gender_preference', nullable: true })
+  @Column({ name: 'gender_preference', type: 'varchar', nullable: true })
   genderPreference: string | null; // 'male', 'female', 'all'
 
   @Column({ name: 'min_age', default: 18 })

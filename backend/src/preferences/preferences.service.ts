@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Preference } from './entities/preference.entity';
@@ -15,6 +15,10 @@ export class PreferencesService {
   }
 
   async upsert(userId: string, data: Partial<Preference>): Promise<Preference> {
+    const current = await this.findByUserId(userId);
+    const minAge = data.minAge ?? current?.minAge ?? 18;
+    const maxAge = data.maxAge ?? current?.maxAge ?? 30;
+    if (minAge > maxAge) throw new BadRequestException('minAge must not exceed maxAge');
     let preference = await this.findByUserId(userId);
     if (!preference) {
       preference = this.preferenceRepository.create({ userId, ...data });

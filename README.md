@@ -47,6 +47,8 @@ fwp/
 │   ├── notebooks/          # EDA & exploration
 │   └── artifacts/          # Trained models
 ├── infrastructure/         # SQL migrations, init scripts
+├── frontend/               # Web demo (OTP, swipe, profile, chat & reveal)
+├── android/                # Android Studio / Jetpack Compose demo app
 ├── docs/                   # Documentation
 ├── docker-compose.yml
 └── .env.example
@@ -102,6 +104,63 @@ uvicorn src.serving.app:app --host 0.0.0.0 --port 8000 --reload
 docker-compose up --build
 ```
 
+### 6. Nạp Dữ Liệu Demo (Synthetic Seed Data)
+Dữ liệu demo bao gồm 42 sinh viên PTIT với hồ sơ đầy đủ, 1.200 impressions, 420 swipe events, 9 match và các đoạn chat mẫu. Lệnh này idempotent (chạy lặp lại an toàn, không làm mất dữ liệu người dùng thật).
+
+**Nạp seed demo:**
+- **Windows PowerShell:**
+  ```powershell
+  Get-Content infrastructure/seed-demo.sql | docker exec -i fwp-postgres psql -U fwp_user -d fwp_db
+  ```
+- **Linux / macOS / Git Bash:**
+  ```bash
+  docker exec -i fwp-postgres psql -U fwp_user -d fwp_db < infrastructure/seed-demo.sql
+  ```
+- **Hoặc qua npm:**
+  ```bash
+  cd backend && npm run seed:demo
+  ```
+
+**Tài khoản demo sẵn sàng đăng nhập:**
+- **Email:** `demo.student01@stu.ptit.edu.vn` (đến `demo.student42@stu.ptit.edu.vn`)
+- **Mật khẩu:** `Demo@123456`
+- **Mã OTP (nếu cần):** `123456`
+
+**Reset dữ liệu demo khi cần (chỉ xoá synthetic demo, không xoá volume/user thật):**
+- **Windows PowerShell:**
+  ```powershell
+  Get-Content infrastructure/reset-demo.sql | docker exec -i fwp-postgres psql -U fwp_user -d fwp_db
+  ```
+- **Linux / macOS / Git Bash:**
+  ```bash
+  docker exec -i fwp-postgres psql -U fwp_user -d fwp_db < infrastructure/reset-demo.sql
+  ```
+- **Hoặc qua npm:**
+  ```bash
+  cd backend && npm run reset:demo
+  ```
+
+### 7. Chạy Luồng Retrain Model ML
+Retrain model trực tiếp từ dữ liệu swipe thực tế trong PostgreSQL (yêu cầu tối thiểu 100 sự kiện swipe gắn liền với recommendation impression):
+
+```bash
+# Chạy retrain ngay lập tức qua container ml-service
+docker exec fwp-ml-service python -m scripts.retrain --min-events 100
+
+# Hoặc hot-reload model mới vào FastAPI ranking service
+curl -X POST http://localhost:8000/v1/reload
+```
+
+Sau khi retrain, model artifact sẽ được lưu tại `ml/artifacts/`, active model được cập nhật và thông tin phiên bản cùng metrics được ghi nhận trong bảng `model_versions` của PostgreSQL.
+
+### 8. Build Ứng Dụng Android Demo
+```bash
+cd android
+./gradlew assembleDebug
+# File APK debug: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+
 ---
 
 ## 🧠 ML Recommendation Pipeline
@@ -151,6 +210,20 @@ Top-K Candidates → Android Swipe Feed
 | POST | `/reveal/:matchId/request` | Request reveal |
 | POST | `/block` | Block user |
 | POST | `/report` | Report user |
+| POST | `/profile/photos` | Upload profile photo to Cloudinary |
+| POST | `/notifications/device-token` | Register an FCM token |
+
+## Realtime, media and notification configuration
+
+- Connect Socket.IO clients to namespace `/chat` with `auth: { token: <JWT> }`. Events include `room:join`, `message:send`, `message:new`, `typing`, `presence`, and `match:new`.
+- OTP is sent using SMTP credentials from `.env`; the API never returns or logs the code.
+- Profile photos use Cloudinary. FCM needs the one-line `FIREBASE_SERVICE_ACCOUNT_JSON` environment variable and a device token registered at `/notifications/device-token`.
+
+## Production retraining
+
+`ml-retrainer` in Compose runs every 24 hours by default. It exports only impression-backed actions from `recommendation_impressions` and `swipe_events`, builds the shared feature set, trains LightGBM, promotes the artifact, and records it in `model_versions`. It waits until `RETRAIN_MIN_EVENTS` (default 100) interactions are available.
+
+For the analysis/report, open `ml/notebooks/01_eda_and_model_report.ipynb`. It contains summary EDA, a PR curve, tree feature importance and SHAP analysis. Run ML tests after installing requirements with `python -m pytest tests -q` from `ml/`.
 
 ---
 

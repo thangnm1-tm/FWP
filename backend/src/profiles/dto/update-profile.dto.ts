@@ -62,4 +62,9 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsBoolean()
   gpaVisible?: boolean;
+
+  @ApiPropertyOptional({ description: 'Allow this profile to appear in Discover' })
+  @IsOptional()
+  @IsBoolean()
+  discoverable?: boolean;
 }

@@ -49,7 +49,7 @@ export class Profile {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @Column({ name: 'display_name', nullable: true })
+  @Column({ name: 'display_name', type: 'varchar', nullable: true })
   displayName: string | null;
 
   @Column({ name: 'date_of_birth', type: 'date', nullable: true })
@@ -70,21 +70,21 @@ export class Profile {
   @Column({ name: 'gpa_bucket', type: 'int', nullable: true })
   gpaBucket: number | null;
 
-  @Column({ name: 'university_id', nullable: true })
+  @Column({ name: 'university_id', type: 'uuid', nullable: true })
   universityId: string | null;
 
   @ManyToOne(() => University, { nullable: true })
   @JoinColumn({ name: 'university_id' })
   university: University | null;
 
-  @Column({ name: 'faculty_id', nullable: true })
+  @Column({ name: 'faculty_id', type: 'uuid', nullable: true })
   facultyId: string | null;
 
   @ManyToOne(() => Faculty, { nullable: true })
   @JoinColumn({ name: 'faculty_id' })
   faculty: Faculty | null;
 
-  @Column({ name: 'academic_year', nullable: true })
+  @Column({ name: 'academic_year', type: 'int', nullable: true })
   academicYear: number | null;
 
   @Column({ type: 'enum', enum: Purpose, nullable: true })
@@ -95,6 +95,10 @@ export class Profile {
 
   @Column({ name: 'gpa_visible', default: true })
   gpaVisible: boolean;
+
+  // Discovery is opt-in so existing and newly registered users stay private.
+  @Column({ name: 'discoverable', default: false })
+  discoverable: boolean;
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;

@@ -37,10 +37,10 @@ export class SwipeEvent {
   @Column({ type: 'enum', enum: SwipeAction })
   action: SwipeAction;
 
-  @Column({ name: 'impression_id', nullable: true })
+  @Column({ name: 'impression_id', type: 'uuid', nullable: true })
   impressionId: string | null;
 
-  @Column({ name: 'session_id', nullable: true })
+  @Column({ name: 'session_id', type: 'uuid', nullable: true })
   sessionId: string | null;
 
   @CreateDateColumn({ name: 'created_at' })

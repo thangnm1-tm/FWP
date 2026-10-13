@@ -185,18 +185,20 @@ def save_model(model, metrics: dict, config: dict, version: str):
 
     print(f"\nModel saved to {output_dir}/")
 
-    # Symlink as active model
+    # Symlink or copy as active model
+    import shutil
     active_path = os.path.join("artifacts", "active_model")
-    if os.path.islink(active_path) or os.path.exists(active_path):
-        if os.path.islink(active_path):
-            os.unlink(active_path)
-        # On Windows, just copy
+    if os.path.islink(active_path):
+        os.unlink(active_path)
+    elif os.path.isdir(active_path):
+        shutil.rmtree(active_path)
+    elif os.path.exists(active_path):
+        os.remove(active_path)
+
     try:
         os.symlink(os.path.abspath(output_dir), active_path)
         print(f"Active model symlinked: {active_path} → {output_dir}")
     except OSError:
-        # Windows may not support symlinks without admin
-        import shutil
         if os.path.exists(active_path):
             shutil.rmtree(active_path)
         shutil.copytree(output_dir, active_path)

@@ -11,6 +11,15 @@ interface RankedCandidate {
   score: number;
   rank: number;
   distanceKm?: number;
+  impressionId?: string;
+  displayName?: string;
+  age?: number;
+  bio?: string;
+  photos?: string[];
+  interests?: string[];
+  faculty?: string;
+  university?: string;
+  gpaBucket?: number | null;
 }
 
 interface MlRankResponse {
@@ -83,7 +92,7 @@ export class RecommendationService {
     const topK = ranked.slice(0, limit);
 
     // ── Step 4: Log impressions ──
-    await this.swipeService.logImpressions(
+    const impressions = await this.swipeService.logImpressions(
       viewerId,
       requestId,
       modelVersion,
@@ -94,7 +103,37 @@ export class RecommendationService {
       })),
     );
 
+    const publicProfiles = await this.loadPublicCards(topK.map((c) => c.candidateId));
+    const impressionByCandidate = new Map(impressions.map((i) => [i.candidateId, i.impressionId]));
+    const profileByCandidate = new Map(publicProfiles.map((p) => [p.candidateId, p]));
+    for (const candidate of topK) {
+      candidate.impressionId = impressionByCandidate.get(candidate.candidateId);
+      Object.assign(candidate, profileByCandidate.get(candidate.candidateId));
+    }
+
     return { requestId, modelVersion, candidates: topK };
+  }
+
+  /** Return only fields intended for the public swipe card; never expose email or DOB. */
+  private async loadPublicCards(candidateIds: string[]): Promise<Partial<RankedCandidate>[]> {
+    if (!candidateIds.length) return [];
+    return this.dataSource.query(
+      `SELECT p.user_id AS "candidateId", p.display_name AS "displayName",
+        CASE WHEN p.date_of_birth IS NULL THEN NULL
+          ELSE EXTRACT(YEAR FROM AGE(CURRENT_DATE, p.date_of_birth))::int END AS age,
+        p.bio, p.photos,
+        f.name AS faculty, un.short_name AS university,
+        COALESCE(array_agg(DISTINCT i.name) FILTER (WHERE i.name IS NOT NULL), '{}') AS interests
+       FROM profiles p
+       LEFT JOIN faculties f ON f.id = p.faculty_id
+       LEFT JOIN universities un ON un.id = p.university_id
+       LEFT JOIN user_interests ui ON ui.user_id = p.user_id
+       LEFT JOIN interests i ON i.id = ui.interest_id
+       WHERE p.user_id = ANY($1::uuid[]) AND p.discoverable = TRUE
+       GROUP BY p.user_id, p.display_name, p.date_of_birth, p.bio, p.photos,
+         f.name, un.short_name`,
+      [candidateIds],
+    );
   }
 
   /**
@@ -145,6 +184,8 @@ export class RecommendationService {
       LEFT JOIN user_locations ul_viewer ON ul_viewer.user_id = $1
       WHERE u.status = 'active'
         AND p.profile_completed = true
+        AND p.date_of_birth <= CURRENT_DATE - INTERVAL '18 years'
+        AND p.discoverable = true
         AND p.user_id != $1
     `;
 

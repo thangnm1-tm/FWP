@@ -16,7 +16,9 @@
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
     "migration:generate": "npm run typeorm -- migration:generate -d src/database/data-source.ts",
     "migration:run": "npm run typeorm -- migration:run -d src/database/data-source.ts",
-    "migration:revert": "npm run typeorm -- migration:revert -d src/database/data-source.ts"
+    "migration:revert": "npm run typeorm -- migration:revert -d src/database/data-source.ts",
+    "seed:demo": "docker exec -i fwp-postgres psql -U fwp_user -d fwp_db -f /infrastructure/seed-demo.sql",
+    "reset:demo": "docker exec -i fwp-postgres psql -U fwp_user -d fwp_db -f /infrastructure/reset-demo.sql"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
@@ -32,6 +34,8 @@
     "bcrypt": "^5.1.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
+    "cloudinary": "^2.11.0",
+    "firebase-admin": "^14.5.0",
     "ioredis": "^5.3.2",
     "nodemailer": "^6.9.8",
     "passport": "^0.7.0",
@@ -65,13 +69,19 @@
     "typescript": "^5.3.3"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   }

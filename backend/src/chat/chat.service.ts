@@ -155,6 +155,13 @@ export class ChatService {
   }
 
   async declineReveal(matchId: string, userId: string): Promise<RevealRequest> {
+    const match = await this.matchRepository.findOne({ where: { id: matchId } });
+    if (!match) throw new NotFoundException('Match not found');
+
+    if (match.userAId !== userId && match.userBId !== userId) {
+      throw new ForbiddenException('Not part of this match');
+    }
+
     const reveal = await this.revealRepository.findOne({ where: { matchId } });
     if (!reveal) throw new NotFoundException('No reveal request found');
 
@@ -170,6 +177,17 @@ export class ChatService {
   // ─── Block & Report ───
 
   async blockUser(blockerId: string, blockedId: string): Promise<void> {
+    if (blockerId === blockedId) {
+      throw new BadRequestException('Cannot block yourself');
+    }
+
+    const existing = await this.blockRepository.findOne({
+      where: { blockerId, blockedId },
+    });
+    if (existing) {
+      return;
+    }
+
     const block = this.blockRepository.create({ blockerId, blockedId });
     await this.blockRepository.save(block);
 
@@ -188,6 +206,10 @@ export class ChatService {
     reason: string,
     description?: string,
   ): Promise<Report> {
+    if (reporterId === reportedId) {
+      throw new BadRequestException('Cannot report yourself');
+    }
+
     const report = this.reportRepository.create({
       reporterId,
       reportedId,
@@ -227,5 +249,16 @@ export class ChatService {
     if (!match.active) {
       throw new ForbiddenException('Match is no longer active');
     }
+  }
+
+  async assertChatAccess(chatRoomId: string, userId: string): Promise<void> {
+    return this.verifyChatAccess(chatRoomId, userId);
+  }
+
+  async getOtherMemberId(chatRoomId: string, userId: string): Promise<string> {
+    const room = await this.chatRoomRepository.findOne({ where: { id: chatRoomId }, relations: ['match'] });
+    if (!room) throw new NotFoundException('Chat room not found');
+    await this.verifyChatAccess(chatRoomId, userId);
+    return room.match.userAId === userId ? room.match.userBId : room.match.userAId;
   }
 }

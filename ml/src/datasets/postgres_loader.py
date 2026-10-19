@@ -1,4 +1,4 @@
-"""Export production interaction tables to the same raw CSV contract as synthetic data."""
+﻿"""Export production interaction tables to the same raw CSV contract as synthetic data."""
 from __future__ import annotations
 
 import os
@@ -27,7 +27,7 @@ def export_training_data(output_dir: str, min_events: int = 100) -> int:
     output.mkdir(parents=True, exist_ok=True)
     engine = create_engine(database_url())
     queries = {
-        "profiles.csv": "SELECT user_id, university_id, faculty_id AS faculty_code, academic_year, gpa, gpa_bucket, profile_completed FROM profiles",
+        "profiles.csv": "SELECT p.user_id, p.date_of_birth, p.university_id, f.code AS faculty_code, p.academic_year, p.gpa, p.gpa_bucket, p.profile_completed FROM profiles p LEFT JOIN faculties f ON f.id = p.faculty_id WHERE p.profile_completed = true AND p.date_of_birth IS NOT NULL",
         "user_interests.csv": "SELECT ui.user_id, i.name AS interest_name FROM user_interests ui JOIN interests i ON i.id = ui.interest_id",
         "locations.csv": "SELECT user_id, latitude, longitude FROM user_locations",
         "preferences.csv": "SELECT user_id, min_age, max_age, gpa_preference FROM preferences",
@@ -41,6 +41,10 @@ def export_training_data(output_dir: str, min_events: int = 100) -> int:
     with engine.connect() as conn:
         for filename, query in queries.items():
             pd.read_sql(text(query), conn).to_csv(output / filename, index=False)
+    profiles = pd.read_csv(output / "profiles.csv")
+    if "date_of_birth" not in profiles or profiles["date_of_birth"].isna().any():
+        missing = int(profiles["date_of_birth"].isna().sum()) if "date_of_birth" in profiles else len(profiles)
+        raise ValueError(f"Production profile data contains {missing} missing date_of_birth values")
     events = pd.read_csv(output / "swipe_events.csv")
     if len(events) < min_events:
         raise ValueError(f"Need at least {min_events} impression-backed swipe events; found {len(events)}")

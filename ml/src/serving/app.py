@@ -6,11 +6,12 @@ POST /v1/rank: Batch scoring for candidate ranking
 import os
 import time
 import logging
+import secrets
 from typing import Optional
 
 import joblib
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -28,9 +29,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[origin.strip() for origin in os.environ.get(
+        "ML_CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"
+    ).split(",") if origin.strip()],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-ML-Reload-Token"],
+    allow_credentials=True,
 )
 
 # ── Global state ──
@@ -43,6 +47,11 @@ heuristic_ranker = HeuristicRanker()
 def load_model():
     """Load ML model from artifacts directory."""
     global ml_model, model_version
+
+    # Do not retain a previously active model when a reload fails or the
+    # active artifact has been removed.
+    ml_model = None
+    model_version = "rule_v1"
 
     model_path = os.environ.get("MODEL_PATH", "artifacts/active_model")
     model_file = os.path.join(model_path, "model.pkl")
@@ -61,8 +70,11 @@ def load_model():
         except Exception as e:
             logger.warning(f"Failed to load model: {e}. Using heuristic fallback.")
             ml_model = None
+            model_version = "rule_v1"
+            return False
     else:
         logger.info("No ML model found. Using heuristic ranker.")
+    return ml_model is not None
 
 
 @app.on_event("startup")
@@ -154,11 +166,12 @@ async def rank_candidates(request: RankRequest):
 
     except Exception as e:
         logger.error(f"Ranking error: {e}")
-        # Emergency fallback: random scores
-        results = [
-            CandidateScore(candidate_id=cid, score=round(np.random.random(), 4))
-            for cid in request.candidate_ids
-        ]
+        # Emergency fallback remains deterministic and consistent with the
+        # normal no-model path.
+        scores = heuristic_ranker.score_batch(request.viewer_id, request.candidate_ids)
+        results = [CandidateScore(candidate_id=cid, score=round(float(score), 4))
+                   for cid, score in zip(request.candidate_ids, scores)]
+        results.sort(key=lambda item: item.score, reverse=True)
 
     inference_ms = (time.time() - start_time) * 1000
 
@@ -171,7 +184,18 @@ async def rank_candidates(request: RankRequest):
 
 
 @app.post("/v1/reload")
-async def reload_model():
+async def reload_model(x_ml_reload_token: Optional[str] = Header(default=None)):
     """Hot-reload the active model."""
-    load_model()
-    return {"message": "Model reloaded", "model_version": model_version}
+    configured_token = os.environ.get("ML_RELOAD_TOKEN")
+    if not configured_token:
+        raise HTTPException(status_code=503, detail="Model reload is not configured")
+    if not x_ml_reload_token or not secrets.compare_digest(x_ml_reload_token, configured_token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    loaded = load_model()
+    if not loaded:
+        return {
+            "message": "No valid ML model available; using heuristic ranker",
+            "model_version": model_version,
+            "model_loaded": False,
+        }
+    return {"message": "Model reloaded", "model_version": model_version, "model_loaded": True}

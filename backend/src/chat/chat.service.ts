@@ -9,12 +9,22 @@ import { Repository } from 'typeorm';
 import {
   ChatRoom,
   Message,
-  RevealRequest,
-  RevealStatus,
   Block,
   Report,
 } from './entities/chat.entities';
 import { Match } from '../matches/entities/match.entity';
+import { ProfilesService } from '../profiles/profiles.service';
+
+export interface ChatRoomSummary {
+  id: string;
+  matchId: string;
+  createdAt: Date;
+  peerUserId: string;
+  peerDisplayName: string | null;
+  peerAvatarUrl: string | null;
+  peerPhotos: string[];
+  lastMessage: string | null;
+}
 
 @Injectable()
 export class ChatService {
@@ -25,9 +35,6 @@ export class ChatService {
     @InjectRepository(Message)
     private readonly messageRepository: Repository<Message>,
 
-    @InjectRepository(RevealRequest)
-    private readonly revealRepository: Repository<RevealRequest>,
-
     @InjectRepository(Block)
     private readonly blockRepository: Repository<Block>,
 
@@ -36,20 +43,40 @@ export class ChatService {
 
     @InjectRepository(Match)
     private readonly matchRepository: Repository<Match>,
+
+    private readonly profilesService: ProfilesService,
   ) {}
 
   // ─── Chat Room ───
 
   async createChatRoom(matchId: string): Promise<ChatRoom> {
-    const room = this.chatRoomRepository.create({ matchId });
-    return this.chatRoomRepository.save(room);
+    const match = await this.matchRepository.findOne({ where: { id: matchId, active: true } });
+    if (!match) throw new NotFoundException('Active match not found');
+    const existing = await this.getChatRoomByMatch(matchId);
+    if (existing) return existing;
+
+    try {
+      await this.chatRoomRepository
+        .createQueryBuilder()
+        .insert()
+        .into(ChatRoom)
+        .values({ matchId })
+        .onConflict('("match_id") DO NOTHING')
+        .execute();
+    } catch (error: any) {
+      if (error?.code !== '23505') throw error;
+    }
+
+    const room = await this.getChatRoomByMatch(matchId);
+    if (!room) throw new NotFoundException('Chat room could not be created');
+    return room;
   }
 
   async getChatRoomByMatch(matchId: string): Promise<ChatRoom | null> {
     return this.chatRoomRepository.findOne({ where: { matchId } });
   }
 
-  async getUserChatRooms(userId: string): Promise<ChatRoom[]> {
+  async getUserChatRooms(userId: string): Promise<ChatRoomSummary[]> {
     const matches = await this.matchRepository.find({
       where: [
         { userAId: userId, active: true },
@@ -60,11 +87,47 @@ export class ChatService {
     const matchIds = matches.map((m) => m.id);
     if (matchIds.length === 0) return [];
 
-    return this.chatRoomRepository
+    const rooms = await this.chatRoomRepository
       .createQueryBuilder('room')
-      .where('room.match_id IN (:...matchIds)', { matchIds })
+      .where('room.matchId IN (:...matchIds)', { matchIds })
       .leftJoinAndSelect('room.match', 'match')
+      .orderBy('room.createdAt', 'DESC')
       .getMany();
+
+    const peerIds = rooms.map((room) => this.getPeerId(room, userId));
+    const profiles = await this.profilesService.getChatProfiles([...new Set(peerIds)]);
+    const profilesByUserId = new Map(profiles.map((profile) => [profile.userId, profile]));
+    const latestMessages = await this.messageRepository
+      .createQueryBuilder('message')
+      .distinctOn(['message.chatRoomId'])
+      .where('message.chatRoomId IN (:...roomIds)', { roomIds: rooms.map((room) => room.id) })
+      .orderBy('message.chatRoomId', 'ASC')
+      .addOrderBy('message.createdAt', 'DESC')
+      .getMany();
+    const lastMessagesByRoomId = new Map(latestMessages.map((message) => [message.chatRoomId, message.content]));
+    return rooms.map((room) => this.presentRoom(
+      room,
+      userId,
+      profilesByUserId.get(this.getPeerId(room, userId)),
+      lastMessagesByRoomId.get(room.id) ?? null,
+    ));
+  }
+
+  async getChatRoomSummary(chatRoomId: string, userId: string): Promise<ChatRoomSummary> {
+    const room = await this.chatRoomRepository.findOne({
+      where: { id: chatRoomId },
+      relations: ['match'],
+    });
+    if (!room) throw new NotFoundException('Chat room not found');
+    await this.verifyChatAccess(chatRoomId, userId);
+    const peerId = this.getPeerId(room, userId);
+    const profile = (await this.profilesService.getChatProfiles([peerId]))[0];
+    const latestMessage = await this.messageRepository.findOne({
+      where: { chatRoomId },
+      order: { createdAt: 'DESC' },
+      select: ['content'],
+    });
+    return this.presentRoom(room, userId, profile, latestMessage?.content ?? null);
   }
 
   // ─── Messages ───
@@ -104,74 +167,6 @@ export class ChatService {
     }
 
     return qb.getMany();
-  }
-
-  // ─── Reveal ───
-
-  async requestReveal(matchId: string, requesterId: string): Promise<RevealRequest> {
-    const match = await this.matchRepository.findOne({ where: { id: matchId } });
-    if (!match) throw new NotFoundException('Match not found');
-
-    if (match.userAId !== requesterId && match.userBId !== requesterId) {
-      throw new ForbiddenException('Not part of this match');
-    }
-
-    let reveal = await this.revealRepository.findOne({ where: { matchId } });
-
-    if (!reveal) {
-      // First request
-      const isUserA = match.userAId === requesterId;
-      reveal = this.revealRepository.create({
-        matchId,
-        requesterId,
-        status: isUserA ? RevealStatus.A_REQUESTED : RevealStatus.B_REQUESTED,
-      });
-      return this.revealRepository.save(reveal);
-    }
-
-    // Second user accepting
-    if (reveal.requesterId === requesterId) {
-      throw new BadRequestException('You already requested reveal');
-    }
-
-    if (
-      reveal.status === RevealStatus.A_REQUESTED ||
-      reveal.status === RevealStatus.B_REQUESTED
-    ) {
-      reveal.status = RevealStatus.BOTH_ACCEPTED;
-      reveal.respondedAt = new Date();
-      await this.revealRepository.save(reveal);
-
-      // Update chat room
-      await this.chatRoomRepository.update(
-        { matchId },
-        { identityRevealed: true },
-      );
-
-      return reveal;
-    }
-
-    throw new BadRequestException('Reveal already processed');
-  }
-
-  async declineReveal(matchId: string, userId: string): Promise<RevealRequest> {
-    const match = await this.matchRepository.findOne({ where: { id: matchId } });
-    if (!match) throw new NotFoundException('Match not found');
-
-    if (match.userAId !== userId && match.userBId !== userId) {
-      throw new ForbiddenException('Not part of this match');
-    }
-
-    const reveal = await this.revealRepository.findOne({ where: { matchId } });
-    if (!reveal) throw new NotFoundException('No reveal request found');
-
-    if (reveal.requesterId === userId) {
-      throw new BadRequestException('Cannot decline your own request');
-    }
-
-    reveal.status = RevealStatus.DECLINED;
-    reveal.respondedAt = new Date();
-    return this.revealRepository.save(reveal);
   }
 
   // ─── Block & Report ───
@@ -249,6 +244,34 @@ export class ChatService {
     if (!match.active) {
       throw new ForbiddenException('Match is no longer active');
     }
+  }
+
+  private getPeerId(room: ChatRoom, userId: string): string {
+    const match = room.match;
+    if (!match || (match.userAId !== userId && match.userBId !== userId)) {
+      throw new ForbiddenException('Not a member of this chat');
+    }
+    return match.userAId === userId ? match.userBId : match.userAId;
+  }
+
+  private presentRoom(
+    room: ChatRoom,
+    userId: string,
+    profile?: { userId: string; displayName: string | null; photos: string[] },
+    lastMessage: string | null = null,
+  ): ChatRoomSummary {
+    const peerUserId = this.getPeerId(room, userId);
+    const peerPhotos = profile?.photos ?? [];
+    return {
+      id: room.id,
+      matchId: room.matchId,
+      createdAt: room.createdAt,
+      peerUserId,
+      peerDisplayName: profile?.displayName ?? null,
+      peerAvatarUrl: peerPhotos[0] ?? null,
+      peerPhotos,
+      lastMessage,
+    };
   }
 
   async assertChatAccess(chatRoomId: string, userId: string): Promise<void> {

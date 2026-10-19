@@ -5,26 +5,40 @@ import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect,
 import { Server, Socket } from 'socket.io';
 import { ChatService } from './chat.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UsersService } from '../users/users.service';
+import { UserStatus } from '../users/entities/user.entity';
 
 type AuthSocket = Socket & { userId?: string };
 type SendMessageEvent = { roomId: string; content: string };
 type RoomEvent = { roomId: string };
 
-@WebSocketGateway({ namespace: '/chat', cors: { origin: '*', credentials: true } })
+const configuredCorsOrigins = process.env.CORS_ORIGINS?.trim();
+const corsOrigins = (configuredCorsOrigins || 'http://localhost:3000,http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+if (!configuredCorsOrigins && process.env.NODE_ENV === 'production') {
+  throw new Error('CORS_ORIGINS must be set to an explicit comma-separated allow-list in production');
+}
+
+@WebSocketGateway({ namespace: '/chat', cors: { origin: corsOrigins, credentials: true } })
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
   private readonly logger = new Logger(ChatGateway.name);
   private readonly online = new Map<string, number>();
 
-  constructor(private readonly jwt: JwtService, private readonly config: ConfigService, private readonly chat: ChatService, private readonly notifications: NotificationsService) {}
+  constructor(private readonly jwt: JwtService, private readonly config: ConfigService, private readonly chat: ChatService, private readonly notifications: NotificationsService, private readonly users: UsersService) {}
 
   async handleConnection(socket: AuthSocket): Promise<void> {
     try {
       const queryToken = socket.handshake.query?.token;
       const raw = socket.handshake.auth?.token || socket.handshake.headers.authorization?.replace(/^Bearer\s+/i, '') || (typeof queryToken === 'string' ? queryToken : '');
       if (!raw) throw new Error('Missing token');
-      const payload = await this.jwt.verifyAsync<{ sub: string }>(raw, { secret: this.config.get('JWT_SECRET', 'dev_jwt_secret_key_12345') });
+      const payload = await this.jwt.verifyAsync<{ sub: string }>(raw, { secret: this.config.getOrThrow<string>('JWT_SECRET') });
+      const user = await this.users.findById(payload.sub);
+      if (!user || user.status !== UserStatus.ACTIVE) throw new Error('User account is not active');
       socket.userId = payload.sub;
       socket.join(`user:${payload.sub}`);
       this.online.set(payload.sub, (this.online.get(payload.sub) || 0) + 1);

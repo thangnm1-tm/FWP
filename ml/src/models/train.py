@@ -64,15 +64,18 @@ def prepare_data(config: dict):
 
     df = pd.read_csv(data_path)
 
-    # Label
-    label_col = config.get("label", "liked")
-    X = df[FEATURE_COLUMNS].values
-    y = df[label_col].values
-
     # Temporal split (by created_at if available, else random)
     if "created_at" in df.columns:
         df["created_at"] = pd.to_datetime(df["created_at"])
         df = df.sort_values("created_at")
+
+    # Build arrays only after sorting so features and labels retain temporal order.
+    label_col = config.get("label", "liked")
+    X = df[FEATURE_COLUMNS].values
+    y = df[label_col].values
+    viewers = df["viewer_id"].values if "viewer_id" in df.columns else None
+
+    if "created_at" in df.columns:
 
         n = len(df)
         train_end = int(n * 0.7)
@@ -81,6 +84,9 @@ def prepare_data(config: dict):
         X_train, y_train = X[:train_end], y[:train_end]
         X_val, y_val = X[train_end:val_end], y[train_end:val_end]
         X_test, y_test = X[val_end:], y[val_end:]
+        viewers_train = viewers[:train_end] if viewers is not None else None
+        viewers_val = viewers[train_end:val_end] if viewers is not None else None
+        viewers_test = viewers[val_end:] if viewers is not None else None
     else:
         from sklearn.model_selection import train_test_split
         X_train, X_temp, y_train, y_temp = train_test_split(
@@ -89,11 +95,13 @@ def prepare_data(config: dict):
         X_val, X_test, y_val, y_test = train_test_split(
             X_temp, y_temp, test_size=0.5, random_state=config.get("seed", 42),
         )
+        viewers_train, viewers_val, viewers_test = None, None, None
 
     print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
     print(f"Positive rate — Train: {y_train.mean():.2%}, Val: {y_val.mean():.2%}, Test: {y_test.mean():.2%}")
 
-    return X_train, y_train, X_val, y_val, X_test, y_test
+    return (X_train, y_train, X_val, y_val, X_test, y_test,
+            viewers_train, viewers_val, viewers_test)
 
 
 def train_logistic(X_train, y_train, config: dict):
@@ -136,7 +144,7 @@ def train_lightgbm(X_train, y_train, X_val, y_val, config: dict):
     return model
 
 
-def evaluate_model(model, X, y, model_name: str) -> dict:
+def evaluate_model(model, X, y, model_name: str, viewer_ids=None) -> dict:
     """Compute classification and ranking metrics."""
     y_prob = model.predict_proba(X)[:, 1]
     y_pred = (y_prob >= 0.5).astype(int)
@@ -152,8 +160,8 @@ def evaluate_model(model, X, y, model_name: str) -> dict:
         "f1": round(f1_score(y, y_pred, zero_division=0), 4),
     }
 
-    # Ranking metrics (group by viewer if available)
-    ranking = compute_ranking_metrics(y, y_prob, k_values=[5, 10])
+    # Ranking metrics grouped by viewer when viewer ids are available
+    ranking = compute_ranking_metrics(y, y_prob, k_values=[5, 10], viewer_ids=viewer_ids)
     metrics.update(ranking)
 
     return metrics
@@ -223,7 +231,8 @@ def main():
     print()
 
     # Prepare data
-    X_train, y_train, X_val, y_val, X_test, y_test = prepare_data(config)
+    (X_train, y_train, X_val, y_val, X_test, y_test,
+     viewers_train, viewers_val, viewers_test) = prepare_data(config)
 
     # Train
     start_time = time.time()
@@ -239,12 +248,12 @@ def main():
 
     # Evaluate
     print("\n=== Validation Metrics ===")
-    val_metrics = evaluate_model(model, X_val, y_val, f"{args.model}_val")
+    val_metrics = evaluate_model(model, X_val, y_val, f"{args.model}_val", viewers_val)
     for k, v in val_metrics.items():
         print(f"  {k}: {v}")
 
     print("\n=== Test Metrics ===")
-    test_metrics = evaluate_model(model, X_test, y_test, f"{args.model}_test")
+    test_metrics = evaluate_model(model, X_test, y_test, f"{args.model}_test", viewers_test)
     for k, v in test_metrics.items():
         print(f"  {k}: {v}")
 

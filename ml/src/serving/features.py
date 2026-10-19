@@ -104,10 +104,12 @@ class FeatureBuilder:
     def _get_user_profile(self, conn, user_id: str) -> Optional[dict]:
         result = conn.execute(
             text("""
-                SELECT user_id, date_of_birth, gender, gpa, gpa_bucket,
-                       university_id, faculty_id, academic_year,
+                SELECT p.user_id, p.date_of_birth, p.gender, p.gpa, p.gpa_bucket,
+                       p.university_id, p.faculty_id, f.code AS faculty_code,
+                       p.academic_year,
                        profile_completed, bio
-                FROM profiles WHERE user_id = :uid
+                FROM profiles p LEFT JOIN faculties f ON f.id = p.faculty_id
+                WHERE p.user_id = :uid
             """),
             {"uid": user_id},
         )
@@ -116,7 +118,11 @@ class FeatureBuilder:
 
     def _get_user_interests(self, conn, user_id: str) -> set:
         result = conn.execute(
-            text("SELECT interest_id FROM user_interests WHERE user_id = :uid"),
+            text("""
+                SELECT i.name
+                FROM user_interests ui JOIN interests i ON i.id = ui.interest_id
+                WHERE ui.user_id = :uid
+            """),
             {"uid": user_id},
         )
         return {str(row[0]) for row in result}
@@ -154,13 +160,13 @@ class FeatureBuilder:
         # Age features
         age_a = self._calc_age(viewer.get("date_of_birth"))
         age_b = self._calc_age(candidate.get("date_of_birth"))
-        age_diff = abs(age_a - age_b) if age_a and age_b else 0
+        age_diff = abs(age_a - age_b) if age_a is not None and age_b is not None else 0
 
         # School features
         same_school = float(viewer.get("university_id") == candidate.get("university_id")
                            and viewer.get("university_id") is not None)
-        same_faculty = float(viewer.get("faculty_id") == candidate.get("faculty_id")
-                            and viewer.get("faculty_id") is not None)
+        same_faculty = float(viewer.get("faculty_code") == candidate.get("faculty_code")
+                            and viewer.get("faculty_code") is not None)
         same_year = float(viewer.get("academic_year") == candidate.get("academic_year")
                          and viewer.get("academic_year") is not None)
 
@@ -186,10 +192,10 @@ class FeatureBuilder:
         completion_b = float(candidate.get("profile_completed", False))
 
         # Preference compatibility
-        a_age_pref = self._check_age_pref(viewer_prefs, age_b) if viewer_prefs else 0.5
-        b_age_pref = self._check_age_pref(cand_prefs, age_a) if cand_prefs else 0.5
+        a_age_pref = self._check_age_pref(viewer_prefs, age_b)
+        b_age_pref = self._check_age_pref(cand_prefs, age_a)
         mutual_age_pref = float(a_age_pref > 0 and b_age_pref > 0)
-        a_gpa_pref = self._check_gpa_pref(viewer_prefs, bucket_b) if viewer_prefs else 0.5
+        a_gpa_pref = self._check_gpa_pref(viewer_prefs, bucket_b)
 
         return [
             float(age_a or 20), float(age_b or 20), float(age_diff),
@@ -209,18 +215,24 @@ class FeatureBuilder:
         from datetime import date
         today = date.today()
         if hasattr(dob, 'year'):
-            return float(today.year - dob.year)
+            return float(today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day)))
         return None
 
     def _check_age_pref(self, prefs: dict, age: Optional[float]) -> float:
-        if age is None:
+        if not prefs or age is None:
             return 0.5
         min_age = prefs.get("min_age", 18)
         max_age = prefs.get("max_age", 30)
+        if min_age is None or max_age is None or pd.isna(min_age) or pd.isna(max_age):
+            return 0.5
         return 1.0 if min_age <= age <= max_age else 0.0
 
-    def _check_gpa_pref(self, prefs: dict, cand_bucket: int) -> float:
+    def _check_gpa_pref(self, prefs: Optional[dict], cand_bucket: int) -> float:
+        if not prefs:
+            return 0.5
         gpa_pref = prefs.get("gpa_preference", "no_preference")
+        if gpa_pref is None or pd.isna(gpa_pref):
+            return 0.5
         if gpa_pref == "no_preference":
             return 0.5
         # Hard constraint already handled in candidate generation

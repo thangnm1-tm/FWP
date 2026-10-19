@@ -8,8 +8,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-fwp_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fwp_password_change_me}
       POSTGRES_DB: ${POSTGRES_DB:-fwp_db}
+    # Host binding is restricted to loopback by default. Only publish beyond
+    # 127.0.0.1 when you fully intend to expose the database (e.g. set
+    # POSTGRES_BIND=0.0.0.0 behind a firewall/private network).
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infrastructure/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
@@ -26,8 +29,9 @@ services:
     image: redis:7-alpine
     container_name: fwp-redis
     restart: unless-stopped
+    # Loopback-only unless REDIS_BIND is explicitly overridden.
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -51,8 +55,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-fwp_db}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_key_12345}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev_jwt_refresh_secret_key_12345}
+      # Secrets MUST come from .env / a secret manager. The dev fallback is
+      # intentionally obvious and weak; rotate it before any shared deploy.
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_dev_only_jwt_secret}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-CHANGE_ME_dev_only_jwt_refresh_secret}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-15m}
       JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-7d}
       ML_SERVICE_URL: http://ml-service:8000
@@ -72,7 +79,7 @@ services:
       CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON}
     ports:
-      - "${BACKEND_PORT:-3000}:3000"
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,8 +104,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fwp_password_change_me}
       POSTGRES_DB: ${POSTGRES_DB:-fwp_db}
       MODEL_PATH: /app/artifacts/active_model
+      ML_CORS_ORIGINS: ${ML_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      ML_RELOAD_TOKEN: ${ML_RELOAD_TOKEN:-}
+    # Loopback-only unless ML_BIND is explicitly overridden.
     ports:
-      - "8000:8000"
+      - "${ML_BIND:-127.0.0.1}:${ML_SERVICE_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,6 +130,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fwp_password_change_me}
       POSTGRES_DB: ${POSTGRES_DB:-fwp_db}
       RETRAIN_MIN_EVENTS: ${RETRAIN_MIN_EVENTS:-100}
+      ML_RELOAD_URL: ${ML_RELOAD_URL:-http://ml-service:8000/v1/reload}
+      ML_RELOAD_TOKEN: ${ML_RELOAD_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

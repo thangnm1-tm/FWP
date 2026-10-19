@@ -26,6 +26,5 @@ interface FwpApi {
     @GET("chat/rooms") suspend fun chatRooms(): List<ChatRoom>
     @GET("chat/{roomId}/messages") suspend fun messages(@Path("roomId") roomId: String): List<ChatMessage>
     @POST("chat/{roomId}/messages") suspend fun sendMessage(@Path("roomId") roomId: String, @Body request: SendMessageRequest): ChatMessage
-    @POST("reveal/{matchId}/request") suspend fun requestReveal(@Path("matchId") matchId: String): Any
     @POST("notifications/device-token") suspend fun registerDevice(@Body request: DeviceTokenRequest): Any
 }

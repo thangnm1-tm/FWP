@@ -21,9 +21,6 @@ export class ChatRoom {
   @JoinColumn({ name: 'match_id' })
   match: Match;
 
-  @Column({ name: 'identity_revealed', default: false })
-  identityRevealed: boolean;
-
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

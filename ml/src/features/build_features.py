@@ -7,6 +7,18 @@ Shared logic with serving/features.py to minimize training-serving skew.
 import os
 import numpy as np
 import pandas as pd
+from datetime import date
+
+
+def _calc_age(value) -> float | None:
+    """Calculate completed years using the same DOB convention as serving."""
+    if pd.isna(value) or value is None:
+        return None
+    dob = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dob):
+        return None
+    today = date.today()
+    return float(today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day)))
 
 
 def build_training_features(
@@ -51,15 +63,19 @@ def build_training_features(
         viewer_pref = pref_map.get(viewer_id, {})
         cand_pref = pref_map.get(cand_id, {})
 
-        # Age
-        age_a = viewer.get("academic_year", 1) + 17  # approximate
-        age_b = cand.get("academic_year", 1) + 17
+        # Age: use date of birth, matching serving. Missing DOB uses serving's
+        # neutral value so training and inference have the same feature shape.
+        age_a_raw = _calc_age(viewer.get("date_of_birth"))
+        age_b_raw = _calc_age(cand.get("date_of_birth"))
+        age_a = age_a_raw if age_a_raw is not None else 20.0
+        age_b = age_b_raw if age_b_raw is not None else 20.0
         age_diff = abs(age_a - age_b)
 
         # School
-        same_school = float(viewer.get("university_id") == cand.get("university_id"))
-        same_faculty = float(viewer.get("faculty_code") == cand.get("faculty_code"))
-        same_year = float(viewer.get("academic_year") == cand.get("academic_year"))
+        # Missing identifiers are unknown, not equal. This mirrors serving.
+        same_school = _same_non_null(viewer.get("university_id"), cand.get("university_id"))
+        same_faculty = _same_non_null(viewer.get("faculty_code"), cand.get("faculty_code"))
+        same_year = _same_non_null(viewer.get("academic_year"), cand.get("academic_year"))
 
         # GPA
         gpa_a = viewer.get("gpa", 0)
@@ -89,10 +105,10 @@ def build_training_features(
         completion_b = float(cand.get("profile_completed", False))
 
         # Preference compatibility
-        a_age_pref = 1.0 if viewer_pref.get("min_age", 18) <= age_b <= viewer_pref.get("max_age", 30) else 0.0
-        b_age_pref = 1.0 if cand_pref.get("min_age", 18) <= age_a <= cand_pref.get("max_age", 30) else 0.0
+        a_age_pref = _check_age_pref(viewer_pref, age_b_raw)
+        b_age_pref = _check_age_pref(cand_pref, age_a_raw)
         mutual_age_pref = float(a_age_pref > 0 and b_age_pref > 0)
-        a_gpa_pref = 1.0 if viewer_pref.get("gpa_preference", "no_preference") == "no_preference" else 0.5
+        a_gpa_pref = _check_gpa_pref(viewer_pref)
 
         # Label
         liked = 1 if swipe["action"] == "LIKE" else 0
@@ -121,6 +137,30 @@ def build_training_features(
     print(f"Positive rate: {df['liked'].mean():.2%}")
 
     return df
+
+
+def _check_age_pref(preferences: dict, age: float | None) -> float:
+    """Match serving semantics: absent data is neutral, not an implicit match."""
+    if not preferences or age is None:
+        return 0.5
+    min_age = preferences.get("min_age", 18)
+    max_age = preferences.get("max_age", 30)
+    if pd.isna(min_age) or pd.isna(max_age):
+        return 0.5
+    return 1.0 if min_age <= age <= max_age else 0.0
+
+
+def _same_non_null(left, right) -> float:
+    """Return equality only when both values are present."""
+    if left is None or right is None or pd.isna(left) or pd.isna(right):
+        return 0.0
+    return float(left == right)
+
+
+def _check_gpa_pref(preferences: dict) -> float:
+    if not preferences or pd.isna(preferences.get("gpa_preference")):
+        return 0.5
+    return 0.5 if preferences.get("gpa_preference") == "no_preference" else 1.0
 
 
 if __name__ == "__main__":

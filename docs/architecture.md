@@ -43,21 +43,15 @@
 1. User A **LIKES** User B → `swipe_events` insert
 2. Check if B already **LIKED** A
 3. If mutual → create `matches` row (with ordered UUIDs)
-4. Create `chat_rooms` (identity_revealed = false)
-5. Notify both users via FCM
-
-### Reveal Flow
-```
-NONE → A_REQUESTED → BOTH_ACCEPTED (if B accepts)
-                   → DECLINED (if B declines)
-NONE → B_REQUESTED → BOTH_ACCEPTED (if A accepts)
-                   → DECLINED (if A declines)
-```
+4. Create one `chat_rooms` row for the active match
+5. Return the room ID and the other member's public chat profile to the swiper
+6. Notify both users via FCM and Socket.IO
 
 ## Security
 - JWT access + refresh tokens
 - Argon2/bcrypt password hashing
 - Email domain validation (configurable)
 - OTP with expiration + max attempts
-- Backend enforces identity hiding before reveal
+- Chat profile data is returned only to authenticated members of an active match
+- Legacy reveal records and `identity_revealed` remain stored for compatibility; they do not control chat identity visibility
 - Location: only approximate distance exposed to clients

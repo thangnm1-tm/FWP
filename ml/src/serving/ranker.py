@@ -23,12 +23,18 @@ class HeuristicRanker:
         """
         Generate heuristic scores for candidates.
         In production this would query DB for features.
-        For now, returns random scores as a simple baseline.
+        Uses a stable hash of the viewer and candidate IDs when pair features
+        are unavailable, preserving deterministic ordering across requests.
         """
-        # TODO: When DB connection is available, compute actual heuristic scores
-        # For now, uniform random scores (Model 0 = random baseline)
-        n = len(candidate_ids)
-        return np.random.uniform(0.1, 0.9, size=n)
+        # Keep this deterministic until feature construction is available.
+        import hashlib
+        return np.array([
+            0.1 + 0.8 * (
+                int(hashlib.sha256(f"{viewer_id}:{candidate_id}".encode()).hexdigest()[:16], 16)
+                / float(16 ** 16 - 1)
+            )
+            for candidate_id in candidate_ids
+        ], dtype=np.float32)
 
     def score_with_features(self, features: np.ndarray) -> np.ndarray:
         """

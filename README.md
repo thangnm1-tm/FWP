@@ -35,7 +35,7 @@ fwp/
 │       ├── swipe/          # Swipe events, impression logging
 │       ├── matches/        # Match management
 │       ├── recommendation/ # ML pipeline integration
-│       └── chat/           # Chat, Reveal, Block, Report
+│       └── chat/           # Chat, legacy Reveal records, Block, Report
 ├── ml/                     # Machine Learning Pipeline
 │   ├── src/
 │   │   ├── datasets/       # Synthetic data generator
@@ -47,7 +47,7 @@ fwp/
 │   ├── notebooks/          # EDA & exploration
 │   └── artifacts/          # Trained models
 ├── infrastructure/         # SQL migrations, init scripts
-├── frontend/               # Web demo (OTP, swipe, profile, chat & reveal)
+├── frontend/               # Web demo (OTP, swipe, profile & chat)
 ├── android/                # Android Studio / Jetpack Compose demo app
 ├── docs/                   # Documentation
 ├── docker-compose.yml
@@ -207,7 +207,7 @@ Top-K Candidates → Android Swipe Feed
 | POST | `/swipe` | Like/Pass |
 | GET | `/matches` | Get matches |
 | GET/POST | `/chat/:roomId/messages` | Chat |
-| POST | `/reveal/:matchId/request` | Request reveal |
+| POST | `/reveal/:matchId/request` | Deprecated legacy endpoint; returns `410 Gone` |
 | POST | `/block` | Block user |
 | POST | `/report` | Report user |
 | POST | `/profile/photos` | Upload profile photo to Cloudinary |

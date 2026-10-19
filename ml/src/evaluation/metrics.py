@@ -11,16 +11,33 @@ def compute_ranking_metrics(
     y_true: np.ndarray,
     y_scores: np.ndarray,
     k_values: list[int] = [5, 10],
+    viewer_ids: np.ndarray | None = None,
 ) -> dict:
     """
     Compute ranking metrics: NDCG@K, Precision@K, Recall@K, MRR.
 
-    For proper ranking evaluation, data should be grouped by viewer.
-    This simplified version treats the entire test set as one ranking.
+    Metrics are averaged across viewer groups when viewer_ids are supplied.
     """
-    metrics = {}
+    y_true = np.asarray(y_true)
+    y_scores = np.asarray(y_scores)
+    if viewer_ids is not None:
+        viewer_ids = np.asarray(viewer_ids)
+    lengths = [len(y_true), len(y_scores)] + ([len(viewer_ids)] if viewer_ids is not None else [])
+    if len(set(lengths)) != 1:
+        raise ValueError("y_true, y_scores, and viewer_ids must have the same length")
+
+    if viewer_ids is not None:
+        groups = [
+            compute_ranking_metrics(y_true[viewer_ids == viewer_id], y_scores[viewer_ids == viewer_id], k_values)
+            for viewer_id in np.unique(viewer_ids)
+        ]
+        if not groups:
+            return {}
+        return {key: round(float(np.mean([group[key] for group in groups])), 4)
+                for key in groups[0]}
 
     # Sort by predicted score descending
+    metrics = {}
     sorted_indices = np.argsort(-y_scores)
     y_true_sorted = y_true[sorted_indices]
 
@@ -37,15 +54,20 @@ def compute_ranking_metrics(
         metrics[f"recall_at_{k}"] = round(float(recall_k), 4)
 
         # NDCG@K
-        try:
-            ndcg = ndcg_score(
-                y_true.reshape(1, -1),
-                y_scores.reshape(1, -1),
-                k=k,
-            )
-            metrics[f"ndcg_at_{k}"] = round(float(ndcg), 4)
-        except Exception:
-            metrics[f"ndcg_at_{k}"] = 0.0
+        if len(y_true) == 1:
+            # sklearn rejects one-document rankings, but a relevant document
+            # is necessarily ranked perfectly when it is the only document.
+            ndcg = 1.0 if k > 0 and y_true[0] > 0 else 0.0
+        else:
+            try:
+                ndcg = ndcg_score(
+                    y_true.reshape(1, -1),
+                    y_scores.reshape(1, -1),
+                    k=k,
+                )
+            except Exception:
+                ndcg = 0.0
+        metrics[f"ndcg_at_{k}"] = round(float(ndcg), 4)
 
     # MRR (Mean Reciprocal Rank)
     mrr = 0.0

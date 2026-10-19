@@ -38,9 +38,24 @@ data class Candidate(
     val university: String? = null, val gpaBucket: Int? = null,
 )
 data class SwipeRequest(val candidateId: String, val action: String, val impressionId: String? = null)
-data class SwipeResponse(val matched: Boolean, val matchId: String? = null)
+data class ChatPeer(
+    val userId: String,
+    val displayName: String? = null,
+    val avatarUrl: String? = null,
+    val photos: List<String> = emptyList(),
+)
+data class SwipeResponse(val matched: Boolean, val matchId: String? = null, val roomId: String? = null, val peer: ChatPeer? = null)
 data class Match(val id: String, val userAId: String, val userBId: String, val matchedAt: String, val active: Boolean)
-data class ChatRoom(val id: String, val matchId: String, val identityRevealed: Boolean = false)
+data class ChatRoom(
+    val id: String,
+    val matchId: String,
+    val createdAt: String? = null,
+    val peerUserId: String,
+    val peerDisplayName: String? = null,
+    val peerAvatarUrl: String? = null,
+    val peerPhotos: List<String> = emptyList(),
+    val lastMessage: String? = null,
+)
 data class ChatMessage(val id: String, val chatRoomId: String, val senderId: String, val content: String, val createdAt: String)
 data class SendMessageRequest(val content: String)
 data class DeviceTokenRequest(val token: String, val platform: String = "android")

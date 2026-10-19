@@ -16,32 +16,18 @@ export class LocationService {
     latitude: number,
     longitude: number,
   ): Promise<UserLocation> {
-    let location = await this.locationRepository.findOne({
-      where: { userId },
-    });
-
-    if (!location) {
-      location = this.locationRepository.create({
-        userId,
-        latitude,
-        longitude,
-      });
-    } else {
-      location.latitude = latitude;
-      location.longitude = longitude;
-    }
-
-    const saved = await this.locationRepository.save(location);
-
-    // Update PostGIS point column via raw query
-    await this.dataSource.query(
-      `UPDATE user_locations
-       SET point = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
-       WHERE user_id = $3`,
-      [longitude, latitude, userId],
+    const rows = await this.dataSource.query(
+      `INSERT INTO user_locations (user_id, latitude, longitude, point)
+       VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography)
+       ON CONFLICT (user_id) DO UPDATE SET
+         latitude = EXCLUDED.latitude,
+         longitude = EXCLUDED.longitude,
+         point = EXCLUDED.point,
+         updated_at = NOW()
+       RETURNING id, user_id AS "userId", latitude, longitude, updated_at AS "updatedAt"`,
+      [userId, latitude, longitude],
     );
-
-    return saved;
+    return this.locationRepository.create(rows[0] as Partial<UserLocation>);
   }
 
   /**

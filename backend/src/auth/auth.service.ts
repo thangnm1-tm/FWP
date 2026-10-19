@@ -3,6 +3,8 @@ import {
   BadRequestException,
   UnauthorizedException,
   ConflictException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -11,18 +13,23 @@ import { UsersService } from '../users/users.service';
 import { UserStatus } from '../users/entities/user.entity';
 import { RegisterDto, LoginDto, VerifyOtpDto } from './dto/auth.dto';
 import { MailerService } from '../mailer/mailer.service';
+import { DataSource } from 'typeorm';
+import { StudentVerification } from '../users/entities/student-verification.entity';
+import { User } from '../users/entities/user.entity';
 
 @Injectable()
 export class AuthService {
   private readonly allowedDomains: string[];
   private readonly maxOtpAttempts = 5;
   private readonly otpExpirationMinutes = 10;
+  private readonly defaultOtpResendCooldownSeconds = 60;
 
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailerService: MailerService,
+    private readonly dataSource: DataSource,
   ) {
     this.allowedDomains = this.configService
       .get<string>('ALLOWED_EMAIL_DOMAINS', 'stu.ptit.edu.vn')
@@ -85,44 +92,48 @@ export class AuthService {
    * Verify student email with OTP
    */
   async verifyOtp(userId: string, dto: VerifyOtpDto) {
-    const user = await this.usersService.findById(userId);
-    if (!user) {
-      throw new BadRequestException('User không tồn tại');
+    const result = await this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOne(User, { where: { id: userId } });
+      // Do not disclose whether a user id exists. The same response is used
+      // for an unknown id, an active account, and a missing OTP challenge.
+      if (!user || user.status !== UserStatus.PENDING) {
+        return { error: 'invalid-challenge' as const };
+      }
+
+      const verification = await manager.findOne(StudentVerification, {
+        where: { userId, verified: false },
+        order: { createdAt: 'DESC' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!verification) return { error: 'invalid-challenge' as const };
+      if (verification.attempts >= this.maxOtpAttempts) return { error: 'attempts' as const };
+      if (new Date() > verification.otpExpiresAt) return { error: 'expired' as const };
+
+      // This update commits even for an invalid code; throwing inside the
+      // transaction would roll the attempt increment back.
+      await manager.increment(StudentVerification, { id: verification.id }, 'attempts', 1);
+      if (verification.otpCode !== dto.otpCode) return { error: 'invalid-code' as const };
+
+      await manager.update(StudentVerification, verification.id, {
+        verified: true,
+        verifiedAt: new Date(),
+      });
+      await manager.update(User, userId, { status: UserStatus.ACTIVE });
+      return { user };
+    });
+
+    if ('error' in result && result.error) {
+      const messages = {
+        'invalid-challenge': 'Yêu cầu xác thực không hợp lệ hoặc đã hết hạn',
+        attempts: 'Đã vượt quá số lần thử. Vui lòng yêu cầu OTP mới.',
+        expired: 'OTP đã hết hạn',
+        'invalid-code': 'OTP không chính xác',
+      } as const;
+      throw new BadRequestException(messages[result.error]);
     }
-
-    const verification =
-      await this.usersService.findLatestVerification(userId);
-
-    if (!verification) {
-      throw new BadRequestException('Không tìm thấy yêu cầu xác thực');
-    }
-
-    if (verification.verified) {
-      throw new BadRequestException('Email đã được xác thực');
-    }
-
-    if (verification.attempts >= this.maxOtpAttempts) {
-      throw new BadRequestException(
-        'Đã vượt quá số lần thử. Vui lòng yêu cầu OTP mới.',
-      );
-    }
-
-    if (new Date() > verification.otpExpiresAt) {
-      throw new BadRequestException('OTP đã hết hạn');
-    }
-
-    await this.usersService.incrementVerificationAttempts(verification.id);
-
-    if (verification.otpCode !== dto.otpCode) {
-      throw new BadRequestException('OTP không chính xác');
-    }
-
-    // Mark as verified
-    await this.usersService.markVerified(verification.id);
-    await this.usersService.activateUser(userId);
 
     // Generate tokens
-    return this.generateTokens(user.id, user.email);
+    return this.generateTokens(result.user.id, result.user.email);
   }
 
   /**
@@ -179,12 +190,10 @@ export class AuthService {
    */
   async resendOtp(userId: string) {
     const user = await this.usersService.findById(userId);
-    if (!user) {
-      throw new BadRequestException('User không tồn tại');
-    }
-
-    if (user.status !== UserStatus.PENDING) {
-      throw new BadRequestException('Tài khoản đã được xác thực');
+    if (!user || user.status !== UserStatus.PENDING) {
+      throw new BadRequestException(
+        'Yêu cầu xác thực không hợp lệ hoặc đã hết hạn',
+      );
     }
 
     await this.issueOtp(user.id, user.email);
@@ -210,9 +219,50 @@ export class AuthService {
   }
 
   private async issueOtp(userId: string, email: string): Promise<void> {
+    const cooldownSeconds = this.configService.get<number>(
+      'OTP_RESEND_COOLDOWN_SECONDS',
+      this.defaultOtpResendCooldownSeconds,
+    );
     const otpCode = this.generateOtp();
     const expiresAt = new Date(Date.now() + this.otpExpirationMinutes * 60 * 1000);
-    await this.usersService.createVerification(userId, otpCode, expiresAt);
+
+    await this.dataSource.transaction(async (manager) => {
+      // Serialize OTP issuance per account so the cooldown cannot be bypassed
+      // by concurrent resend requests.
+      const user = await manager.findOne(User, {
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!user || user.status !== UserStatus.PENDING) {
+        throw new BadRequestException(
+          'Yêu cầu xác thực không hợp lệ hoặc đã hết hạn',
+        );
+      }
+      const latest = await manager.findOne(StudentVerification, {
+        where: { userId, verified: false },
+        order: { createdAt: 'DESC' },
+      });
+      if (
+        latest?.createdAt &&
+        Date.now() - new Date(latest.createdAt).getTime() < cooldownSeconds * 1000
+      ) {
+      throw new HttpException(
+          `Vui lòng chờ ${cooldownSeconds} giây trước khi yêu cầu OTP mới`,
+        HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      await manager.update(
+        StudentVerification,
+        { userId, verified: false },
+        { otpExpiresAt: new Date() },
+      );
+      const verification = manager.create(StudentVerification, {
+        userId,
+        otpCode,
+        otpExpiresAt: expiresAt,
+      });
+      await manager.save(StudentVerification, verification);
+    });
     await this.mailerService.sendOtp(email, otpCode);
   }
 

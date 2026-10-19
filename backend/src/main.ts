@@ -18,9 +18,22 @@ async function bootstrap() {
     }),
   );
 
-  // CORS
+  // CORS — explicit allow-list only. Wildcard origins combined with
+  // credentials are rejected by browsers and unsafe; never fall back to '*'.
+  const configuredCorsOrigins = process.env.CORS_ORIGINS?.trim();
+  const corsOrigins = (configuredCorsOrigins || 'http://localhost:3000,http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (!configuredCorsOrigins && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'CORS_ORIGINS must be set to an explicit comma-separated allow-list in production',
+    );
+  }
+
   app.enableCors({
-    origin: '*', // Restrict in production
+    origin: corsOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });

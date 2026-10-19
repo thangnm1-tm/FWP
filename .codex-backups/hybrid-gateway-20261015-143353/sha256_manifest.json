@@ -1,0 +1,54 @@
+﻿[
+    {
+        "RelativePath":  "bk.toml",
+        "SHA256":  "B7417369CD45AECC85A6BCC229C5085D9F7887FC20748765FA455361F52F007F"
+    },
+    {
+        "RelativePath":  "config.toml",
+        "SHA256":  "3DC9E91BE139294420BB1D1B6DA176D31325E59C9E425D8D5F094BBC575E99BC"
+    },
+    {
+        "RelativePath":  "ROLLBACK.md",
+        "SHA256":  "9B70455DF343376A0B743A13C33841E7FB7160AF104CB0BFAF55640636B0CC30"
+    },
+    {
+        "RelativePath":  "rollback.ps1",
+        "SHA256":  "B6F668CFEFE2189824ADF6F08401D5762401E56886CE11AB906873CDABA61EF4"
+    },
+    {
+        "RelativePath":  "system_snapshot.txt",
+        "SHA256":  "5C0B40768EE50D42D9E94F25FE3DBA93D489E66EFB9457C711D3884E5236A8F5"
+    },
+    {
+        "RelativePath":  "thinkingjack.config.toml",
+        "SHA256":  "FC9B37A9FD294BE619A9815B373F8CC02772ABB562C1703A0ACA94EDA5DAC2C2"
+    },
+    {
+        "RelativePath":  "version_manifest.json",
+        "SHA256":  "053A0008203B6C3B75913B52D3F1AA299D6D68C54966F6C666C5E38622D98FF8"
+    },
+    {
+        "RelativePath":  "model-catalogs\\thinkingjack-chat.json",
+        "SHA256":  "53B355812066FF0F4479941B67BD0130AF2226CF35C90E3A11EC660B8C72FA2B"
+    },
+    {
+        "RelativePath":  "model-catalogs\\thinkingjack.json",
+        "SHA256":  "CF07F47177CDD9E58F68920D3E9B3CEF2EAF81EFF388C9A4974A79349E1DDFAF"
+    },
+    {
+        "RelativePath":  "thinkingjack-adapter\\README.md",
+        "SHA256":  "D7F428616BBA2E10C3A915F094F439E8FCE3CDEBF3B0217B822CDFBCAEE21F9B"
+    },
+    {
+        "RelativePath":  "thinkingjack-adapter\\run-session.ps1",
+        "SHA256":  "682DF86FFA6328D23A06B8AE758876B6AC3A34A9974D17F9FFC43E464E5D46A6"
+    },
+    {
+        "RelativePath":  "thinkingjack-adapter\\server.mjs",
+        "SHA256":  "43EEB111384E4FE2D7D54ACD0E98B0E02E472D78E23F52B33CED249695C92B0B"
+    },
+    {
+        "RelativePath":  "thinkingjack-adapter\\test.mjs",
+        "SHA256":  "DD9D0E502B3300C8C66B4392DBF5D44DE0A6327A0C5B802435A29479EDE48534"
+    }
+]

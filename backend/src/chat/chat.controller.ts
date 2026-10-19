@@ -7,9 +7,13 @@ import {
   Query,
   UseGuards,
   Request,
+  GoneException,
+  DefaultValuePipe,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
-import { IsString, IsOptional } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsString, IsOptional, IsInt, Max, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ChatService } from './chat.service';
@@ -35,6 +39,16 @@ class ReportUserDto {
   description?: string;
 }
 
+class GetMessagesQueryDto {
+  @ApiPropertyOptional({ default: 50, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'limit must be an integer' })
+  @Min(1)
+  @Max(100)
+  limit: number = 50;
+}
+
 @ApiTags('Chat')
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -53,9 +67,14 @@ export class ChatController {
   async getMessages(
     @Request() req: any,
     @Param('roomId') roomId: string,
-    @Query('limit') limit?: number,
+    @Query() query: GetMessagesQueryDto,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) rawLimit: number,
   ) {
-    return this.chatService.getMessages(roomId, req.user.id, limit || 50);
+    // `rawLimit` applies ParseIntPipe + DefaultValuePipe(50) so non-numeric
+    // input is rejected before it can reach `.take()` as NaN; the DTO enforces
+    // integer bounds (1..100). Clamp defensively as a final guard.
+    const limit = Math.min(Math.max(query.limit ?? rawLimit, 1), 100);
+    return this.chatService.getMessages(roomId, req.user.id, limit);
   }
 
   @Post('chat/:roomId/messages')
@@ -69,21 +88,21 @@ export class ChatController {
   }
 
   @Post('reveal/:matchId/request')
-  @ApiOperation({ summary: 'Request identity reveal' })
+  @ApiOperation({ summary: 'Legacy reveal request (chat identities are visible after matching)', deprecated: true })
   async requestReveal(
     @Request() req: any,
     @Param('matchId') matchId: string,
   ) {
-    return this.chatService.requestReveal(matchId, req.user.id);
+    throw new GoneException('Reveal is no longer required. Chat identities are visible after matching.');
   }
 
   @Post('reveal/:matchId/decline')
-  @ApiOperation({ summary: 'Decline identity reveal' })
+  @ApiOperation({ summary: 'Legacy reveal decline (chat identities are visible after matching)', deprecated: true })
   async declineReveal(
     @Request() req: any,
     @Param('matchId') matchId: string,
   ) {
-    return this.chatService.declineReveal(matchId, req.user.id);
+    throw new GoneException('Reveal is no longer required. Chat identities are visible after matching.');
   }
 
   @Post('block')

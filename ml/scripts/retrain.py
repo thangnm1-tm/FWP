@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from urllib.request import Request, urlopen
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,9 @@ def register_model() -> None:
     candidates = [p for p in artifacts.iterdir() if p.is_dir() and p.name != "active_model"]
     if not candidates:
         return
+    reload_token = os.getenv("ML_RELOAD_TOKEN")
+    if not reload_token:
+        raise RuntimeError("ML_RELOAD_TOKEN is required to register and reload a model")
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
     metrics_path = latest / "metrics.json"
     metrics = json.loads(metrics_path.read_text()) if metrics_path.exists() else {}
@@ -40,7 +44,22 @@ def register_model() -> None:
                    ON CONFLICT(version) DO UPDATE SET metrics = EXCLUDED.metrics, artifact_path = EXCLUDED.artifact_path, is_active = TRUE, deployed_at = NOW()""",
                 (latest.name, "lightgbm", json.dumps(metrics), str(latest), datetime.now(timezone.utc)),
             )
+        reload_url = os.getenv("ML_RELOAD_URL", "http://ml-service:8000/v1/reload")
+        request = Request(
+            reload_url,
+            headers={"X-ML-Reload-Token": reload_token},
+            method="POST",
+        )
+        with urlopen(request, timeout=10) as response:
+            if response.status >= 300:
+                raise RuntimeError(f"ML reload failed with HTTP {response.status}")
+            payload = json.loads(response.read().decode("utf-8"))
+            if not payload.get("model_loaded", False):
+                raise RuntimeError(f"ML reload failed: {payload.get('message', 'model not loaded')}")
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 

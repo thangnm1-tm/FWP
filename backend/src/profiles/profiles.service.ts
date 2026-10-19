@@ -24,6 +24,15 @@ export class ProfilesService {
     });
   }
 
+  async getChatProfiles(userIds: string[]): Promise<Pick<Profile, 'userId' | 'displayName' | 'photos'>[]> {
+    if (userIds.length === 0) return [];
+    return this.profileRepository
+      .createQueryBuilder('profile')
+      .select(['profile.userId', 'profile.displayName', 'profile.photos'])
+      .where('profile.userId IN (:...userIds)', { userIds })
+      .getMany();
+  }
+
   async createProfile(userId: string): Promise<Profile> {
     const profile = this.profileRepository.create({ userId });
     return this.profileRepository.save(profile);
@@ -82,31 +91,6 @@ export class ProfilesService {
     }
 
     return this.profileRepository.save(profile);
-  }
-
-  async getProfileForCandidate(
-    userId: string,
-    isRevealed: boolean,
-  ): Promise<Partial<Profile>> {
-    const profile = await this.findByUserId(userId);
-    if (!profile) throw new NotFoundException('Profile not found');
-
-    // If identity not revealed, hide certain fields
-    if (!isRevealed) {
-      return {
-        id: profile.id,
-        gender: profile.gender,
-        bio: profile.bio,
-        photos: [], // No photos before reveal
-        gpaBucket: profile.gpaVisible ? profile.gpaBucket : null,
-        universityId: profile.universityId,
-        facultyId: profile.facultyId,
-        academicYear: profile.academicYear,
-        purpose: profile.purpose,
-      };
-    }
-
-    return profile;
   }
 
   async addPhoto(userId: string, url: string): Promise<Profile> {

@@ -42,7 +42,12 @@ export class SwipeService {
     action: SwipeAction,
     impressionId?: string,
     sessionId?: string,
-  ): Promise<{ matched: boolean; matchId?: string }> {
+  ): Promise<{
+    matched: boolean;
+    matchId?: string;
+    roomId?: string;
+    peer?: { userId: string; displayName: string | null; avatarUrl: string | null; photos: string[] };
+  }> {
     if (viewerId === candidateId) {
       throw new BadRequestException('Cannot swipe yourself');
     }
@@ -63,7 +68,7 @@ export class SwipeService {
       }
     }
 
-    // Check for existing swipe (dedup)
+    // Check for existing swipe (fast dedup path)
     const existing = await this.swipeRepository.findOne({
       where: { viewerUserId: viewerId, candidateUserId: candidateId },
     });
@@ -71,41 +76,81 @@ export class SwipeService {
       throw new ConflictException('Already swiped this user');
     }
 
+    const [userLow, userHigh] =
+      viewerId < candidateId ? [viewerId, candidateId] : [candidateId, viewerId];
+
     // Use transaction for atomicity
-    const result = await this.dataSource.transaction(async (manager) => {
-      // Insert swipe event
-      const swipe = manager.create(SwipeEvent, {
-        viewerUserId: viewerId,
-        candidateUserId: candidateId,
-        action,
-        impressionId: impressionId || null,
-        sessionId: sessionId || null,
-      });
-      await manager.save(swipe);
+    let result: {
+      matched: boolean;
+      matchId?: string;
+    };
 
-      // Check for mutual like → create match
-      if (action === SwipeAction.LIKE) {
-        const reciprocalLike = await manager.findOne(SwipeEvent, {
-          where: {
-            viewerUserId: candidateId,
-            candidateUserId: viewerId,
-            action: SwipeAction.LIKE,
-          },
+    try {
+      result = await this.dataSource.transaction(async (manager) => {
+        // Serialize every swipe for an unordered user pair. This makes the
+        // reciprocal-like check observe the other transaction after it commits,
+        // preventing a missed match under concurrent likes.
+        await manager.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+          [userLow, userHigh],
+        );
+
+        // Re-check under the pair lock because the initial check can race.
+        const existingInTransaction = await manager.findOne(SwipeEvent, {
+          where: { viewerUserId: viewerId, candidateUserId: candidateId },
         });
+        if (existingInTransaction) {
+          throw new ConflictException('Already swiped this user');
+        }
 
-        if (reciprocalLike) {
-          // Create match with ordered IDs to prevent duplicates
-          const [userLow, userHigh] =
-            viewerId < candidateId
-              ? [viewerId, candidateId]
-              : [candidateId, viewerId];
+        // Insert swipe event. ON CONFLICT DO NOTHING makes the database
+        // constraint a final race guard instead of surfacing raw 23505 errors.
+        const insert = await manager.query(
+          `INSERT INTO swipe_events
+             (viewer_user_id, candidate_user_id, action, impression_id, session_id)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (viewer_user_id, candidate_user_id) DO NOTHING
+           RETURNING id`,
+          [
+            viewerId,
+            candidateId,
+            action,
+            impressionId || null,
+            sessionId || null,
+          ],
+        );
 
-          // Check if match already exists
-          const existingMatch = await manager.findOne(Match, {
-            where: { userAId: userLow, userBId: userHigh },
+        // A duplicate concurrent swipe: the pre-check raced, so treat as conflict.
+        if (!insert || insert.length === 0) {
+          throw new ConflictException('Already swiped this user');
+        }
+
+        // Check for mutual like → create match
+        if (action === SwipeAction.LIKE) {
+          const reciprocalLike = await manager.findOne(SwipeEvent, {
+            where: {
+              viewerUserId: candidateId,
+              candidateUserId: viewerId,
+              action: SwipeAction.LIKE,
+            },
           });
 
-          if (!existingMatch) {
+          if (reciprocalLike) {
+            // The pair lock above ensures this read sees any committed
+            // reciprocal swipe before match creation.
+            // Check if match already exists
+            const existingMatch = await manager.findOne(Match, {
+              where: { userAId: userLow, userBId: userHigh },
+            });
+
+            if (existingMatch) {
+              // Match already created (e.g. the reciprocal swipe won the race).
+              // Surface it only when it is active so both users converge.
+              return existingMatch.active
+                ? { matched: true, matchId: existingMatch.id }
+                : { matched: false };
+            }
+
             const match = manager.create(Match, {
               userAId: userLow,
               userBId: userHigh,
@@ -114,15 +159,37 @@ export class SwipeService {
             return { matched: true, matchId: saved.id };
           }
         }
-      }
 
-      return { matched: false };
-    });
+        return { matched: false };
+      });
+    } catch (error: any) {
+      if (
+        error instanceof ConflictException ||
+        error?.code === '23505' ||
+        error?.message?.includes('23505') ||
+        error?.message?.includes('duplicate key')
+      ) {
+        throw new ConflictException('Already swiped this user');
+      }
+      throw error;
+    }
     if (result.matched && result.matchId) {
+      // createChatRoom is idempotent; both racing swipes converge on one room.
       const room = await this.chatService.createChatRoom(result.matchId);
+      const roomSummary = await this.chatService.getChatRoomSummary(room.id, viewerId);
       const matchEvent = { matchId: result.matchId, roomId: room.id, users: [viewerId, candidateId] };
       this.chatGateway.notifyUsers([viewerId, candidateId], 'match:new', matchEvent);
-      await this.notifications.sendToUsers([viewerId, candidateId], { title: 'Bạn có một kết nối mới!', body: 'Hãy bắt đầu trò chuyện ẩn danh trên FwP.', data: { type: 'match', matchId: result.matchId, roomId: room.id } });
+      await this.notifications.sendToUsers([viewerId, candidateId], { title: 'Bạn có một kết nối mới!', body: 'Hãy bắt đầu trò chuyện trên FwP.', data: { type: 'match', matchId: result.matchId, roomId: room.id } });
+      return {
+        ...result,
+        roomId: room.id,
+        peer: {
+          userId: roomSummary.peerUserId,
+          displayName: roomSummary.peerDisplayName,
+          avatarUrl: roomSummary.peerAvatarUrl,
+          photos: roomSummary.peerPhotos,
+        },
+      };
     }
     return result;
   }

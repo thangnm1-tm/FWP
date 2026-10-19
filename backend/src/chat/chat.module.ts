@@ -1,9 +1,8 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
   ChatRoom,
   Message,
-  RevealRequest,
   Block,
   Report,
 } from './entities/chat.entities';
@@ -13,15 +12,18 @@ import { ChatController } from './chat.controller';
 import { ChatGateway } from './chat.gateway';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ProfilesModule } from '../profiles/profiles.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     AuthModule,
     NotificationsModule,
+    ProfilesModule,
+    UsersModule,
     TypeOrmModule.forFeature([
       ChatRoom,
       Message,
-      RevealRequest,
       Block,
       Report,
       Match,

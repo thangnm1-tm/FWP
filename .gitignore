@@ -21,3 +21,4 @@ scratch/
 .codex-backups/
 **/.idea/caches/
 **/.idea/deploymentTargetSelector.xml
+*.pdf

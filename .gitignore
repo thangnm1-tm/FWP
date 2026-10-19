@@ -18,3 +18,6 @@ ml/artifacts/
 .DS_Store
 Thumbs.db
 scratch/
+.codex-backups/
+**/.idea/caches/
+**/.idea/deploymentTargetSelector.xml
